@@ -1,7 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-// Import the Vercel Postgres SDK
-const { sql } = require("@vercel/postgres");
+const admin = require("firebase-admin");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,26 +8,18 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Function to create the table if it doesn't exist
-// This is a one-time operation, but it's good practice to ensure the table exists
-async function setupDatabase() {
-  try {
-    await sql`
-      CREATE TABLE IF NOT EXISTS historicos (
-        id SERIAL PRIMARY KEY,
-        lingua VARCHAR(255) NOT NULL,
-        data VARCHAR(255) NOT NULL,
-        rank VARCHAR(255)
-      );
-    `;
-    console.log("Database table 'historicos' is ready.");
-  } catch (err) {
-    console.error("Failed to set up database:", err);
-  }
+// Initialize Firebase Admin SDK
+// Use the environment variable for credentials in production on Vercel
+try {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+} catch (error) {
+  console.error("Firebase initialization failed:", error);
 }
 
-// Immediately call the setup function
-setupDatabase();
+const db = admin.firestore();
 
 // POST endpoint to add a new historical record
 app.post("/historico", async (req, res) => {
@@ -39,17 +30,23 @@ app.post("/historico", async (req, res) => {
       return res.status(400).json({ error: "Informe lingua e data." });
     }
 
-    // Insert data into the database
-    const result = await sql`
-      INSERT INTO historicos (lingua, data, rank)
-      VALUES (${lingua}, ${data}, ${rank})
-      RETURNING *;
-    `;
+    const novoHistorico = {
+      lingua,
+      data,
+      rank,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(), // Add a server-side timestamp
+    };
 
-    const novoHistorico = result.rows[0];
-    res.json({ message: "Histórico adicionado!", historico: novoHistorico });
+    // Add a new document to the 'historicos' collection
+    const docRef = await db.collection("historicos").add(novoHistorico);
+
+    res.status(201).json({
+      message: "Histórico adicionado!",
+      id: docRef.id,
+      historico: novoHistorico,
+    });
   } catch (err) {
-    console.error("Error inserting data:", err);
+    console.error("Error adding document: ", err);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
@@ -57,10 +54,17 @@ app.post("/historico", async (req, res) => {
 // GET endpoint to retrieve all historical records
 app.get("/historico", async (req, res) => {
   try {
-    const { rows } = await sql`SELECT * FROM historicos ORDER BY id ASC;`;
-    res.json(rows);
+    const historicosRef = db.collection("historicos");
+    const snapshot = await historicosRef.get();
+
+    const historicos = [];
+    snapshot.forEach((doc) => {
+      historicos.push({ id: doc.id, ...doc.data() });
+    });
+
+    res.json(historicos);
   } catch (err) {
-    console.error("Error fetching data:", err);
+    console.error("Error fetching documents: ", err);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
@@ -68,26 +72,23 @@ app.get("/historico", async (req, res) => {
 // GET endpoint for statistics
 app.get("/estatisticas", async (req, res) => {
   try {
-    const totalResult = await sql`SELECT COUNT(*) FROM historicos;`;
-    const total = parseInt(totalResult.rows[0].count, 10);
+    const historicosRef = db.collection("historicos");
+    const snapshot = await historicosRef.get();
 
-    const linguaCountResult = await sql`
-      SELECT lingua, COUNT(*) AS count
-      FROM historicos
-      GROUP BY lingua;
-    `;
+    const total = snapshot.size;
 
-    const porLingua = linguaCountResult.rows.reduce((acc, item) => {
-      acc[item.lingua] = parseInt(item.count, 10);
-      return acc;
-    }, {});
+    const porLingua = {};
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      porLingua[data.lingua] = (porLingua[data.lingua] || 0) + 1;
+    });
 
     res.json({
       total,
       porLingua,
     });
   } catch (err) {
-    console.error("Error generating statistics:", err);
+    console.error("Error fetching statistics: ", err);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
