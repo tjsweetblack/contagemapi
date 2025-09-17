@@ -1,0 +1,23 @@
+{
+  "name": "analitic_mapazzz",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "types": "commonjs",
+  "scripts": {
+    "start": "./server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@vercel/postgres": "^0.10.0",
+    "cors": "^2.8.5",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
